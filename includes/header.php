@@ -3,14 +3,20 @@
  * includes/header.php
  * ------------------------------------------------------------
  * PURPOSE: Shared HTML header + navigation bar.
- *          Included at the top of every page.
+ *
+ * INCLUDED BY: Every page in the site.
+ *
+ * NOTES:
+ *   - Starts the session if not already started.
+ *   - Contains the global CSS used by all pages.
+ *   - Renders different nav links depending on login state
+ *     and role (user vs admin).
  * ------------------------------------------------------------
  */
 
-// Start session if not already started
-// (Sessions let us remember who is logged in)
+// Start session if it hasn't been started yet.
 if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+    @session_start();
 }
 ?>
 <!DOCTYPE html>
@@ -19,9 +25,13 @@ if (session_status() === PHP_SESSION_NONE) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lost and Found - Niels Brock</title>
-    <!-- Simple inline CSS for now. We'll improve later. -->
+
+    <!-- ============================================================
+         GLOBAL STYLES
+         Shared across every page. Page-specific styles are usually
+         added via inline style attributes in each file.
+         ============================================================ -->
     <style>
-        /* Reset and base styles */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: Arial, sans-serif;
@@ -30,9 +40,9 @@ if (session_status() === PHP_SESSION_NONE) {
             line-height: 1.6;
         }
 
-        /* Navigation bar */
+        /* NAVBAR */
         .navbar {
-            background-color: #041E60;   /* Niels Brock dark blue */
+            background-color: #041E60;
             color: white;
             padding: 15px 30px;
             display: flex;
@@ -47,8 +57,13 @@ if (session_status() === PHP_SESSION_NONE) {
             font-size: 15px;
         }
         .navbar a:hover { text-decoration: underline; }
+        .navbar .admin-link {
+            background: #8b0000;
+            padding: 6px 12px;
+            border-radius: 5px;
+        }
 
-        /* Container for page content */
+        /* CONTAINER */
         .container {
             max-width: 500px;
             margin: 40px auto;
@@ -58,7 +73,7 @@ if (session_status() === PHP_SESSION_NONE) {
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
 
-        /* Form styles */
+        /* FORMS */
         .form-group { margin-bottom: 15px; }
         .form-group label {
             display: block;
@@ -76,7 +91,7 @@ if (session_status() === PHP_SESSION_NONE) {
             font-size: 14px;
         }
 
-        /* Buttons */
+        /* BUTTONS */
         .btn {
             display: inline-block;
             background-color: #041E60;
@@ -90,7 +105,7 @@ if (session_status() === PHP_SESSION_NONE) {
         }
         .btn:hover { background-color: #0a2d80; }
 
-        /* Alerts */
+        /* ALERTS */
         .alert {
             padding: 12px;
             border-radius: 5px;
@@ -100,22 +115,35 @@ if (session_status() === PHP_SESSION_NONE) {
         .alert-error   { background: #f8d7da; color: #721c24; }
         .alert-success { background: #d4edda; color: #155724; }
 
-        /* Small helper text */
+        /* HELPERS */
         .helper { font-size: 13px; color: #666; margin-top: 10px; }
     </style>
 </head>
 <body>
 
-<!-- Navigation bar -->
+<!-- ============================================================
+     NAVIGATION BAR
+     Logged-in users see Dashboard, My Reports, Browse, optional
+     Admin link, and Logout. Guests see Login and Register.
+     ============================================================ -->
 <nav class="navbar">
     <h1>🔍 Lost &amp; Found — Niels Brock</h1>
     <div>
         <?php if (isset($_SESSION['user_id'])): ?>
-            <!-- Show these links only if user is logged in -->
+            <!-- Links for logged-in users -->
             <a href="dashboard.php">Dashboard</a>
-            <a href="logout.php">Logout (<?php echo htmlspecialchars($_SESSION['full_name']); ?>)</a>
+            <a href="my_reports.php">My Reports</a>
+            <a href="browse.php">Browse</a>
+
+            <!-- Admin-only link, styled differently -->
+            <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin'): ?>
+                <a href="admin_dashboard.php" class="admin-link">Admin</a>
+            <?php endif; ?>
+
+            <!-- Logout link showing the user's name -->
+            <a href="logout.php">Logout (<?php echo htmlspecialchars($_SESSION['full_name'] ?? 'User'); ?>)</a>
         <?php else: ?>
-            <!-- Show these links if user is NOT logged in -->
+            <!-- Links for guests -->
             <a href="login.php">Login</a>
             <a href="register.php">Register</a>
         <?php endif; ?>

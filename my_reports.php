@@ -4,46 +4,28 @@
  * ------------------------------------------------------------
  * PURPOSE: Shows the logged-in user's own lost and found reports
  *          WITH images, category names, and status.
- *
- * ACCESS: Any logged-in user.
- *
- * FLOW:
- *   1. Require login.
- *   2. Fetch the user's own lost items (with category name).
- *   3. Fetch the user's own found items (with category name).
- *   4. Render two tables with image thumbnails.
  * ------------------------------------------------------------
  */
 
-// Show all errors while developing.
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// Buffer output so headers can be sent later if needed.
 ob_start();
-
-// Connect to the database.
 require_once 'dbconnect.php';
 
-// Start the session.
 @session_start();
 
-// ------------------------------------------------------------
-// AUTHORIZATION CHECK
-// Must be logged in.
-// ------------------------------------------------------------
+// Must be logged in
 if (!isset($_SESSION['user_id'])) {
     ob_end_clean();
     header("Location: login.php");
     exit;
 }
 
-// Store the current user ID.
 $user_id = $_SESSION['user_id'];
 
 // ------------------------------------------------------------
-// FETCH THE USER'S LOST ITEMS
-// Uses LEFT JOIN so items still show even if category is missing.
+// Fetch user's lost items
 // ------------------------------------------------------------
 $lost_stmt = $conn->prepare(
     "SELECT l.*, c.category_name
@@ -56,10 +38,7 @@ $lost_stmt->bind_param("i", $user_id);
 $lost_stmt->execute();
 $lost_items = $lost_stmt->get_result();
 
-// ------------------------------------------------------------
-// FETCH THE USER'S FOUND ITEMS
-// Same pattern as above.
-// ------------------------------------------------------------
+// Fetch user's found items
 $found_stmt = $conn->prepare(
     "SELECT f.*, c.category_name
      FROM found_items f
@@ -71,27 +50,21 @@ $found_stmt->bind_param("i", $user_id);
 $found_stmt->execute();
 $found_items = $found_stmt->get_result();
 
-// Include the shared header/navigation.
 include 'includes/header.php';
 ?>
 
-<!-- ============================================================
-     MAIN PAGE CONTAINER
-     ============================================================ -->
 <div class="container" style="max-width:1100px;">
 
     <h2 style="margin-bottom:20px;">My Reports</h2>
 
     <!-- ============================================================
-         LOST ITEMS SECTION
+         LOST ITEMS
          ============================================================ -->
     <h3 style="margin-top:20px;">My Lost Items (<?php echo $lost_items->num_rows; ?>)</h3>
 
     <?php if ($lost_items->num_rows === 0): ?>
-        <!-- Empty state message -->
         <p class="helper">You haven't reported any lost items yet.</p>
     <?php else: ?>
-
         <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:14px;">
             <thead>
                 <tr style="background:#041E60; color:white;">
@@ -107,8 +80,6 @@ include 'includes/header.php';
             <tbody>
             <?php while ($row = $lost_items->fetch_assoc()): ?>
                 <tr style="border-bottom:1px solid #ddd;">
-
-                    <!-- Thumbnail or "No image" placeholder -->
                     <td style="padding:8px;">
                         <?php if (!empty($row['image_path']) && file_exists($row['image_path'])): ?>
                             <img src="<?php echo htmlspecialchars($row['image_path']); ?>"
@@ -119,20 +90,14 @@ include 'includes/header.php';
                             </div>
                         <?php endif; ?>
                     </td>
-
                     <td style="padding:8px;"><?php echo htmlspecialchars($row['item_name']); ?></td>
                     <td style="padding:8px;"><?php echo htmlspecialchars($row['category_name'] ?? '—'); ?></td>
-
-                    <!-- Color / Brand combined into one cell -->
                     <td style="padding:8px;">
                         <?php echo htmlspecialchars($row['color'] ?: '—'); ?> /
                         <?php echo htmlspecialchars($row['brand'] ?: '—'); ?>
                     </td>
-
                     <td style="padding:8px;"><?php echo htmlspecialchars($row['location'] ?: '—'); ?></td>
                     <td style="padding:8px;"><?php echo htmlspecialchars($row['date_lost']); ?></td>
-
-                    <!-- Status badge -->
                     <td style="padding:8px;">
                         <span style="background:#e8efff; padding:3px 8px; border-radius:10px; font-size:12px;">
                             <?php echo htmlspecialchars($row['status']); ?>
@@ -145,15 +110,13 @@ include 'includes/header.php';
     <?php endif; ?>
 
     <!-- ============================================================
-         FOUND ITEMS SECTION
+         FOUND ITEMS
          ============================================================ -->
     <h3 style="margin-top:40px;">My Found Items (<?php echo $found_items->num_rows; ?>)</h3>
 
     <?php if ($found_items->num_rows === 0): ?>
-        <!-- Empty state message -->
         <p class="helper">You haven't reported any found items yet.</p>
     <?php else: ?>
-
         <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:14px;">
             <thead>
                 <tr style="background:#1e7e34; color:white;">
@@ -169,7 +132,6 @@ include 'includes/header.php';
             <tbody>
             <?php while ($row = $found_items->fetch_assoc()): ?>
                 <tr style="border-bottom:1px solid #ddd;">
-                    <!-- Thumbnail or "No image" placeholder -->
                     <td style="padding:8px;">
                         <?php if (!empty($row['image_path']) && file_exists($row['image_path'])): ?>
                             <img src="<?php echo htmlspecialchars($row['image_path']); ?>"
@@ -180,20 +142,14 @@ include 'includes/header.php';
                             </div>
                         <?php endif; ?>
                     </td>
-
                     <td style="padding:8px;"><?php echo htmlspecialchars($row['item_name']); ?></td>
                     <td style="padding:8px;"><?php echo htmlspecialchars($row['category_name'] ?? '—'); ?></td>
-
-                    <!-- Color / Brand combined -->
                     <td style="padding:8px;">
                         <?php echo htmlspecialchars($row['color'] ?: '—'); ?> /
                         <?php echo htmlspecialchars($row['brand'] ?: '—'); ?>
                     </td>
-
                     <td style="padding:8px;"><?php echo htmlspecialchars($row['location'] ?: '—'); ?></td>
                     <td style="padding:8px;"><?php echo htmlspecialchars($row['date_found']); ?></td>
-
-                    <!-- Status badge -->
                     <td style="padding:8px;">
                         <span style="background:#d4edda; padding:3px 8px; border-radius:10px; font-size:12px;">
                             <?php echo htmlspecialchars($row['status']); ?>
@@ -205,7 +161,6 @@ include 'includes/header.php';
         </table>
     <?php endif; ?>
 
-    <!-- Back link to dashboard -->
     <p style="margin-top:30px;">
         <a href="dashboard.php" class="btn">← Back to Dashboard</a>
     </p>
