@@ -18,6 +18,16 @@
 if (session_status() === PHP_SESSION_NONE) {
     @session_start();
 }
+// Count unread notifications
+$unread_count = 0;
+if (isset($_SESSION['user_id'])) {
+    require_once __DIR__ . '/../dbconnect.php';
+    $stmt = $conn->prepare("SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND is_read = 0");
+    $stmt->bind_param("i", $_SESSION['user_id']);
+    $stmt->execute();
+    $unread_count = $stmt->get_result()->fetch_assoc()['c'];
+    $stmt->close();
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -28,8 +38,6 @@ if (session_status() === PHP_SESSION_NONE) {
 
     <!-- ============================================================
          GLOBAL STYLES
-         Shared across every page. Page-specific styles are usually
-         added via inline style attributes in each file.
          ============================================================ -->
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -123,8 +131,8 @@ if (session_status() === PHP_SESSION_NONE) {
 
 <!-- ============================================================
      NAVIGATION BAR
-     Logged-in users see Dashboard, My Reports, Browse, optional
-     Admin link, and Logout. Guests see Login and Register.
+     Logged-in users see Dashboard, My Reports, Browse, Search,
+     optional Admin link, and Logout. Guests see Login and Register.
      ============================================================ -->
 <nav class="navbar">
     <h1>🔍 Lost &amp; Found — Niels Brock</h1>
@@ -134,6 +142,16 @@ if (session_status() === PHP_SESSION_NONE) {
             <a href="dashboard.php">Dashboard</a>
             <a href="my_reports.php">My Reports</a>
             <a href="browse.php">Browse</a>
+            <a href="search.php">Search</a>
+            <a href="profile.php">Profile</a>
+            <a href="notifications.php" style="position:relative;">
+    🔔
+         <?php if ($unread_count > 0): ?>
+          <span style="background:#dc3545; color:white; font-size:10px; padding:1px 6px; border-radius:10px; margin-left:3px;">
+            <?php echo $unread_count; ?>
+         </span>
+        <?php endif; ?>
+         </a>
 
             <!-- Admin-only link, styled differently -->
             <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin'): ?>
@@ -142,6 +160,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
             <!-- Logout link showing the user's name -->
             <a href="logout.php">Logout (<?php echo htmlspecialchars($_SESSION['full_name'] ?? 'User'); ?>)</a>
+
         <?php else: ?>
             <!-- Links for guests -->
             <a href="login.php">Login</a>

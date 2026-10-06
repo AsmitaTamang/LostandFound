@@ -1,36 +1,25 @@
 <?php
 /**
- * my_reports.php
+ * dashboard.php
  * ------------------------------------------------------------
- * PURPOSE: Shows the logged-in user's own lost and found reports
- *          WITH images, category names, and status.
+ * PURPOSE: Main hub after login.
+ *          Shows user greeting, quick stats, and action buttons.
  *
  * ACCESS: Any logged-in user.
- *
- * FLOW:
- *   1. Require login.
- *   2. Fetch the user's own lost items (with category name).
- *   3. Fetch the user's own found items (with category name).
- *   4. Render two tables with image thumbnails.
  * ------------------------------------------------------------
  */
 
-// Show all errors while developing.
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// Buffer output so headers can be sent later if needed.
 ob_start();
-
-// Connect to the database.
 require_once 'dbconnect.php';
 
-// Start the session.
 @session_start();
 
 // ------------------------------------------------------------
 // AUTHORIZATION CHECK
-// Must be logged in.
+// Must be logged in to view this page.
 // ------------------------------------------------------------
 if (!isset($_SESSION['user_id'])) {
     ob_end_clean();
@@ -38,177 +27,91 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-// Store the current user ID.
-$user_id = $_SESSION['user_id'];
+$user_id = (int)$_SESSION['user_id'];
 
 // ------------------------------------------------------------
-// FETCH THE USER'S LOST ITEMS
-// Uses LEFT JOIN so items still show even if category is missing.
+// GATHER STATISTICS FOR THE DASHBOARD
 // ------------------------------------------------------------
-$lost_stmt = $conn->prepare(
-    "SELECT l.*, c.category_name
-     FROM lost_items l
-     LEFT JOIN categories c ON l.category_id = c.category_id
-     WHERE l.user_id = ?
-     ORDER BY l.created_at DESC"
-);
-$lost_stmt->bind_param("i", $user_id);
-$lost_stmt->execute();
-$lost_items = $lost_stmt->get_result();
 
-// ------------------------------------------------------------
-// FETCH THE USER'S FOUND ITEMS
-// Same pattern as above.
-// ------------------------------------------------------------
-$found_stmt = $conn->prepare(
-    "SELECT f.*, c.category_name
-     FROM found_items f
-     LEFT JOIN categories c ON f.category_id = c.category_id
-     WHERE f.user_id = ?
-     ORDER BY f.created_at DESC"
-);
-$found_stmt->bind_param("i", $user_id);
-$found_stmt->execute();
-$found_items = $found_stmt->get_result();
+// Count the user's own lost reports
+$stmt = $conn->prepare("SELECT COUNT(*) AS c FROM lost_items WHERE user_id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$my_lost_count = $stmt->get_result()->fetch_assoc()['c'];
+$stmt->close();
 
-// Include the shared header/navigation.
+// Count the user's own found reports
+$stmt = $conn->prepare("SELECT COUNT(*) AS c FROM found_items WHERE user_id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$my_found_count = $stmt->get_result()->fetch_assoc()['c'];
+$stmt->close();
+
+// Count total open lost reports (all users)
+$total_lost = $conn->query("SELECT COUNT(*) AS c FROM lost_items WHERE status='open'")->fetch_assoc()['c'];
+
+// Count total open found reports (all users)
+$total_found = $conn->query("SELECT COUNT(*) AS c FROM found_items WHERE status='open'")->fetch_assoc()['c'];
+
 include 'includes/header.php';
 ?>
 
 <!-- ============================================================
-     MAIN PAGE CONTAINER
+     MAIN DASHBOARD CONTAINER
      ============================================================ -->
-<div class="container" style="max-width:1100px;">
+<div class="container" style="max-width:800px;">
+    <h2 style="margin-bottom:15px;">
+        Welcome, <?php echo htmlspecialchars($_SESSION['full_name']); ?>!
+    </h2>
 
-    <h2 style="margin-bottom:20px;">My Reports</h2>
-
-    <!-- ============================================================
-         LOST ITEMS SECTION
-         ============================================================ -->
-    <h3 style="margin-top:20px;">My Lost Items (<?php echo $lost_items->num_rows; ?>)</h3>
-
-    <?php if ($lost_items->num_rows === 0): ?>
-        <!-- Empty state message -->
-        <p class="helper">You haven't reported any lost items yet.</p>
-    <?php else: ?>
-
-        <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:14px;">
-            <thead>
-                <tr style="background:#041E60; color:white;">
-                    <th style="padding:10px; text-align:left;">Image</th>
-                    <th style="padding:10px; text-align:left;">Item</th>
-                    <th style="padding:10px; text-align:left;">Category</th>
-                    <th style="padding:10px; text-align:left;">Color / Brand</th>
-                    <th style="padding:10px; text-align:left;">Location</th>
-                    <th style="padding:10px; text-align:left;">Date Lost</th>
-                    <th style="padding:10px; text-align:left;">Status</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php while ($row = $lost_items->fetch_assoc()): ?>
-                <tr style="border-bottom:1px solid #ddd;">
-
-                    <!-- Thumbnail or "No image" placeholder -->
-                    <td style="padding:8px;">
-                        <?php if (!empty($row['image_path']) && file_exists($row['image_path'])): ?>
-                            <img src="<?php echo htmlspecialchars($row['image_path']); ?>"
-                                 style="width:70px; height:70px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">
-                        <?php else: ?>
-                            <div style="width:70px; height:70px; background:#eee; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:11px; color:#888;">
-                                No image
-                            </div>
-                        <?php endif; ?>
-                    </td>
-
-                    <td style="padding:8px;"><?php echo htmlspecialchars($row['item_name']); ?></td>
-                    <td style="padding:8px;"><?php echo htmlspecialchars($row['category_name'] ?? '—'); ?></td>
-
-                    <!-- Color / Brand combined into one cell -->
-                    <td style="padding:8px;">
-                        <?php echo htmlspecialchars($row['color'] ?: '—'); ?> /
-                        <?php echo htmlspecialchars($row['brand'] ?: '—'); ?>
-                    </td>
-
-                    <td style="padding:8px;"><?php echo htmlspecialchars($row['location'] ?: '—'); ?></td>
-                    <td style="padding:8px;"><?php echo htmlspecialchars($row['date_lost']); ?></td>
-
-                    <!-- Status badge -->
-                    <td style="padding:8px;">
-                        <span style="background:#e8efff; padding:3px 8px; border-radius:10px; font-size:12px;">
-                            <?php echo htmlspecialchars($row['status']); ?>
-                        </span>
-                    </td>
-                </tr>
-            <?php endwhile; ?>
-            </tbody>
-        </table>
-    <?php endif; ?>
+    <div class="alert alert-success">
+        Logged in as <strong><?php echo htmlspecialchars($_SESSION['role']); ?></strong>
+    </div>
 
     <!-- ============================================================
-         FOUND ITEMS SECTION
+         QUICK STATS GRID
          ============================================================ -->
-    <h3 style="margin-top:40px;">My Found Items (<?php echo $found_items->num_rows; ?>)</h3>
+    <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:15px; margin:20px 0;">
+        <div style="background:#e8efff; padding:20px; border-radius:8px; text-align:center;">
+            <div style="font-size:32px; font-weight:bold; color:#041E60;"><?php echo $my_lost_count; ?></div>
+            <div style="margin-top:5px;">My Lost Reports</div>
+        </div>
+        <div style="background:#e8fff0; padding:20px; border-radius:8px; text-align:center;">
+            <div style="font-size:32px; font-weight:bold; color:#1e7e34;"><?php echo $my_found_count; ?></div>
+            <div style="margin-top:5px;">My Found Reports</div>
+        </div>
+        <div style="background:#fff4e6; padding:20px; border-radius:8px; text-align:center;">
+            <div style="font-size:32px; font-weight:bold; color:#b35c00;"><?php echo $total_lost; ?></div>
+            <div style="margin-top:5px;">Open Lost Items</div>
+        </div>
+        <div style="background:#f0e8ff; padding:20px; border-radius:8px; text-align:center;">
+            <div style="font-size:32px; font-weight:bold; color:#5a2d82;"><?php echo $total_found; ?></div>
+            <div style="margin-top:5px;">Open Found Items</div>
+        </div>
+    </div>
 
-    <?php if ($found_items->num_rows === 0): ?>
-        <!-- Empty state message -->
-        <p class="helper">You haven't reported any found items yet.</p>
-    <?php else: ?>
+    <!-- ============================================================
+         MAIN ACTION BUTTONS
+         ============================================================ -->
+    <h3 style="margin-top:30px;">Actions</h3>
+    <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:12px; margin-top:15px;">
+        <a href="report_lost.php" class="btn" style="text-align:center;">Report Lost Item</a>
+        <a href="report_found.php" class="btn" style="text-align:center;">Report Found Item</a>
+        <a href="my_reports.php" class="btn" style="text-align:center; background:#444;">My Reports</a>
+        <a href="search.php" class="btn" style="text-align:center; background:#444;">Search</a>
+        <a href="browse.php" class="btn" style="text-align:center; background:#444;">Browse &amp; Match</a>
+    </div>
 
-        <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:14px;">
-            <thead>
-                <tr style="background:#1e7e34; color:white;">
-                    <th style="padding:10px; text-align:left;">Image</th>
-                    <th style="padding:10px; text-align:left;">Item</th>
-                    <th style="padding:10px; text-align:left;">Category</th>
-                    <th style="padding:10px; text-align:left;">Color / Brand</th>
-                    <th style="padding:10px; text-align:left;">Location</th>
-                    <th style="padding:10px; text-align:left;">Date Found</th>
-                    <th style="padding:10px; text-align:left;">Status</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php while ($row = $found_items->fetch_assoc()): ?>
-                <tr style="border-bottom:1px solid #ddd;">
-                    <!-- Thumbnail or "No image" placeholder -->
-                    <td style="padding:8px;">
-                        <?php if (!empty($row['image_path']) && file_exists($row['image_path'])): ?>
-                            <img src="<?php echo htmlspecialchars($row['image_path']); ?>"
-                                 style="width:70px; height:70px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">
-                        <?php else: ?>
-                            <div style="width:70px; height:70px; background:#eee; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:11px; color:#888;">
-                                No image
-                            </div>
-                        <?php endif; ?>
-                    </td>
-
-                    <td style="padding:8px;"><?php echo htmlspecialchars($row['item_name']); ?></td>
-                    <td style="padding:8px;"><?php echo htmlspecialchars($row['category_name'] ?? '—'); ?></td>
-
-                    <!-- Color / Brand combined -->
-                    <td style="padding:8px;">
-                        <?php echo htmlspecialchars($row['color'] ?: '—'); ?> /
-                        <?php echo htmlspecialchars($row['brand'] ?: '—'); ?>
-                    </td>
-
-                    <td style="padding:8px;"><?php echo htmlspecialchars($row['location'] ?: '—'); ?></td>
-                    <td style="padding:8px;"><?php echo htmlspecialchars($row['date_found']); ?></td>
-
-                    <!-- Status badge -->
-                    <td style="padding:8px;">
-                        <span style="background:#d4edda; padding:3px 8px; border-radius:10px; font-size:12px;">
-                            <?php echo htmlspecialchars($row['status']); ?>
-                        </span>
-                    </td>
-                </tr>
-            <?php endwhile; ?>
-            </tbody>
-        </table>
+    <!-- ============================================================
+         ADMIN SECTION (only visible to admins)
+         ============================================================ -->
+    <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin'): ?>
+        <h3 style="margin-top:30px;">Admin</h3>
+        <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:12px; margin-top:15px;">
+            <a href="admin_dashboard.php" class="btn" style="text-align:center; background:#8b0000;">Admin Dashboard</a>
+            <a href="admin_categories.php" class="btn" style="text-align:center; background:#8b0000;">Manage Categories</a>
+        </div>
     <?php endif; ?>
-
-    <!-- Back link to dashboard -->
-    <p style="margin-top:30px;">
-        <a href="dashboard.php" class="btn">← Back to Dashboard</a>
-    </p>
 </div>
 
 <?php include 'includes/footer.php'; ?>

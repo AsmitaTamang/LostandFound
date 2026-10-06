@@ -143,6 +143,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->close();
     }
 }
+// ============================================================
+// NOTIFY ALL USERS WITH LOST ITEMS IN SAME CATEGORY
+// ============================================================
+if ($success && $category_id > 0) {
+    require_once 'notify.php';
+
+    // Get all users with open lost items in this category
+    $stmt = $conn->prepare(
+        "SELECT user_id, item_name FROM lost_items
+         WHERE status='open' AND category_id = ? AND user_id != ?"
+    );
+    $stmt->bind_param("ii", $category_id, $_SESSION['user_id']);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    while ($r = $res->fetch_assoc()) {
+        create_notification(
+            $conn,
+            $r['user_id'],
+            "Someone reported finding an item that might match your lost '{$r['item_name']}'.",
+            "browse.php"
+        );
+    }
+    $stmt->close();
+}
 
 // Include the shared header/navigation.
 include 'includes/header.php';

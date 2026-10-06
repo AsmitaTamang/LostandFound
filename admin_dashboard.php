@@ -144,5 +144,11 @@ include 'includes/header.php';
         <a href="dashboard.php" class="btn" style="background:#444;">← Back to User Dashboard</a>
     </p>
 </div>
-
+<div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:12px; margin-top:15px;">
+    <a href="admin_categories.php" class="btn" style="text-align:center;">Manage Categories (<?php echo $stats['pending_cats']; ?> pending)</a>
+    <a href="admin_claims.php" class="btn" style="text-align:center;">Manage Claims (<?php echo $stats['pending_claims']; ?> pending)</a>
+</div>
+<div style="margin-top:12px;">
+    <a href="weighting_comparison.php" class="btn" style="text-align:center; background:#041E60; width:100%;">Weighting Strategy Comparison</a>
+</div>
 <?php include 'includes/footer.php'; ?>

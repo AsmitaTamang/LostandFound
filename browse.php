@@ -116,8 +116,11 @@ include 'includes/header.php';
 
                     <!-- LOST ITEM DETAILS -->
                     <div style="flex:1;">
-                        <h3 style="margin-bottom:5px;">
-                            <?php echo htmlspecialchars($lost['item_name']); ?>
+                       
+                            <h3 style="margin-bottom:5px;">
+                          <a href="item_detail.php?type=lost&id=<?php echo $lost['lost_id']; ?>" style="color:inherit; text-decoration:none;">
+                          <?php echo htmlspecialchars($lost['item_name']); ?>
+                          </a>
 
                             <!-- Category badge -->
                             <span style="font-size:12px; background:#041E60; color:white; padding:2px 8px; border-radius:10px; margin-left:8px;">

@@ -75,6 +75,7 @@ include 'includes/header.php';
                     <th style="padding:10px; text-align:left;">Location</th>
                     <th style="padding:10px; text-align:left;">Date Lost</th>
                     <th style="padding:10px; text-align:left;">Status</th>
+                    <th style="padding:10px; text-align:center;">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -101,6 +102,12 @@ include 'includes/header.php';
                     <td style="padding:8px;">
                         <span style="background:#e8efff; padding:3px 8px; border-radius:10px; font-size:12px;">
                             <?php echo htmlspecialchars($row['status']); ?>
+                            <td style="padding:8px; text-align:center;">
+                         <a href="edit_item.php?type=lost&id=<?php echo $row['lost_id']; ?>"
+                          style="background:#041E60; color:white; padding:4px 10px; border-radius:5px; text-decoration:none; font-size:12px;">
+                           Edit
+                         </a>
+                         </td>
                         </span>
                     </td>
                 </tr>
@@ -127,6 +134,7 @@ include 'includes/header.php';
                     <th style="padding:10px; text-align:left;">Location</th>
                     <th style="padding:10px; text-align:left;">Date Found</th>
                     <th style="padding:10px; text-align:left;">Status</th>
+                    <th style="padding:10px; text-align:center;">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -154,6 +162,13 @@ include 'includes/header.php';
                         <span style="background:#d4edda; padding:3px 8px; border-radius:10px; font-size:12px;">
                             <?php echo htmlspecialchars($row['status']); ?>
                         </span>
+                        <td style="padding:8px; text-align:center;">
+                    
+                     <a href="edit_item.php?type=found&id=<?php echo $row['found_id']; ?>"
+                     style="background:#041E60; color:white; padding:4px 10px; border-radius:5px; text-decoration:none; font-size:12px;">
+                       Edit
+                      </a>
+                     </td>
                     </td>
                 </tr>
             <?php endwhile; ?>

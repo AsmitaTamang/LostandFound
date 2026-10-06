@@ -143,6 +143,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->close();
     }
 }
+// ============================================================
+// NOTIFY USERS OF NEW MATCHES
+// ============================================================
+if ($success && !empty($item_name)) {
+    require_once 'notify.php';
+    require_once 'match.php';
+
+    // Get the new lost item ID
+    $new_id = $conn->insert_id;
+
+    // Find matches
+    $matches = find_matches_for_lost($conn, $new_id);
+
+    foreach ($matches as $m) {
+        // Notify the finder (owner of the found item)
+        if ($m['score'] >= 40) {
+            create_notification(
+                $conn,
+                $m['found']['user_id'],
+                "Your found item '{$m['found']['item_name']}' matches a new lost report (score {$m['score']}/100).",
+                "browse.php"
+            );
+        }
+    }
+
+    // Notify this user if a match was found for their new lost item
+    foreach ($matches as $m) {
+        if ($m['score'] >= 40) {
+            create_notification(
+                $conn,
+                $_SESSION['user_id'],
+                "A potential match was found for your lost item '{$item_name}' (score {$m['score']}/100).",
+                "browse.php"
+            );
+            break; // one notification is enough
+        }
+    }
+}
 
 // Include the shared header/navigation.
 include 'includes/header.php';
