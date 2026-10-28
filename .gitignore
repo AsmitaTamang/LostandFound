@@ -1,0 +1,13 @@
+# Ignore uploaded images (keeps the folder, ignores the pictures)
+uploads/*
+!uploads/.gitkeep
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore VS Code settings
+.vscode/
+
+# Ignore local database dumps
+*.sql

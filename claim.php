@@ -2,38 +2,42 @@
 /**
  * claim.php
  * ------------------------------------------------------------
- * PURPOSE: Allows a user to submit a claim on a found item.
- *          Admin will review and approve/reject.
+ * PURPOSE: Allows a user to submit a claim on a found item
+ *          that matches one of their lost reports.
  *
- * URL: claim.php?lost_id=X&found_id=Y
- *
- * ACCESS: Logged-in user. The lost item MUST belong to them.
+ * URL PARAMETERS:
+ *   ?lost_id=X&found_id=Y
+ *     → X = the user's own lost item
+ *     → Y = the found item they want to claim
  *
  * FLOW:
- *   1. Verify login and validate the URL parameters.
- *   2. Check the lost item belongs to the current user.
- *   3. Load the found item details.
- *   4. On POST: prevent duplicate claims, then insert.
- *   5. Show either a success message or the confirmation form.
+ *   1. Require login.
+ *   2. Verify the lost item belongs to the current user.
+ *   3. Verify the found item exists.
+ *   4. On POST: check for duplicate, then insert into `claims`.
+ *
+ * SECURITY:
+ *   - Ownership check on the lost item.
+ *   - Duplicate-claim guard prevents spam.
+ *   - Prepared statements prevent SQL injection.
  * ------------------------------------------------------------
  */
 
-// Buffer output so headers can be sent later.
+// Start output buffering so header() calls work later.
 ob_start();
 
-// Show all errors while developing.
+// Show all errors during development.
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
 // Connect to the database.
 require_once 'dbconnect.php';
 
-// Start the session.
+// Start session if not already started.
 @session_start();
 
 // ------------------------------------------------------------
 // AUTHORIZATION CHECK
-// Must be logged in.
 // ------------------------------------------------------------
 if (!isset($_SESSION['user_id'])) {
     ob_end_clean();
@@ -41,30 +45,31 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-// Read the IDs from the query string.
+// Cache the current user's ID.
 $user_id  = (int)$_SESSION['user_id'];
-$lost_id  = (int)($_GET['lost_id'] ?? 0);
+
+// Read the two IDs from the URL.
+$lost_id  = (int)($_GET['lost_id']  ?? 0);
 $found_id = (int)($_GET['found_id'] ?? 0);
 
-// ------------------------------------------------------------
-// VALIDATE URL PARAMETERS
-// Invalid IDs → back to browse.
-// ------------------------------------------------------------
+// If the IDs are invalid, redirect to browse.
 if ($lost_id <= 0 || $found_id <= 0) {
     ob_end_clean();
     header("Location: browse.php");
     exit;
 }
 
-// Holds validation errors and success message.
+// Arrays for messages.
 $errors  = [];
 $success = '';
 
 // ------------------------------------------------------------
-// VERIFY THE LOST ITEM BELONGS TO THIS USER
-// Prevents users from claiming items they didn't report lost.
+// VERIFY OWNERSHIP OF THE LOST ITEM
+// The user can only claim items for their OWN lost reports.
 // ------------------------------------------------------------
-$stmt = $conn->prepare("SELECT * FROM lost_items WHERE lost_id = ? AND user_id = ?");
+$stmt = $conn->prepare(
+    "SELECT * FROM lost_items WHERE lost_id = ? AND user_id = ?"
+);
 $stmt->bind_param("ii", $lost_id, $user_id);
 $stmt->execute();
 $lost = $stmt->get_result()->fetch_assoc();
@@ -75,11 +80,12 @@ if (!$lost) {
 }
 
 // ------------------------------------------------------------
-// GET THE FOUND ITEM
-// Joins category and finder details for display.
+// LOAD THE FOUND ITEM BEING CLAIMED
+// Also fetch the finder's details for display.
 // ------------------------------------------------------------
 $stmt = $conn->prepare(
-    "SELECT f.*, c.category_name, u.full_name AS finder_name, u.email AS finder_email
+    "SELECT f.*, c.category_name,
+            u.full_name AS finder_name, u.email AS finder_email
      FROM found_items f
      LEFT JOIN categories c ON f.category_id = c.category_id
      LEFT JOIN users u ON f.user_id = u.user_id
@@ -96,11 +102,12 @@ if (!$found) {
 
 // ------------------------------------------------------------
 // HANDLE CLAIM SUBMISSION
-// Only runs on POST and when there are no earlier errors.
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($errors)) {
 
-    // Check if the user already submitted a claim for this pair.
+    // --------------------------------------------------------
+    // GUARD: prevent duplicate claims for the same pair.
+    // --------------------------------------------------------
     $stmt = $conn->prepare(
         "SELECT claim_id FROM claims
          WHERE lost_id = ? AND found_id = ? AND claimant_id = ?"
@@ -114,7 +121,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($errors)) {
     }
     $stmt->close();
 
-    // If still no errors, insert the claim as 'pending'.
+    // --------------------------------------------------------
+    // INSERT THE CLAIM (status = 'pending' until admin decides)
+    // --------------------------------------------------------
     if (empty($errors)) {
         $stmt = $conn->prepare(
             "INSERT INTO claims (lost_id, found_id, claimant_id, status)
@@ -131,38 +140,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($errors)) {
     }
 }
 
-// Include the shared header/navigation.
+// Include the shared header.
 include 'includes/header.php';
 ?>
 
 <!-- ============================================================
-     MAIN PAGE CONTAINER
+     CLAIM PAGE
      ============================================================ -->
 <div class="container" style="max-width:700px;">
-    <h2 style="margin-bottom:20px;">Claim Found Item</h2>
 
+    <h2>Claim Found Item</h2>
+
+    <!-- Success state — show message and stop. -->
     <?php if ($success): ?>
-        <!-- Success state: show message and dashboard link -->
+
         <div class="alert alert-success">✅ <?php echo htmlspecialchars($success); ?></div>
-        <p style="margin-top:20px;"><a href="dashboard.php" class="btn">← Back to Dashboard</a></p>
+        <p style="margin-top:20px;">
+            <a href="dashboard.php" class="btn">← Back to Dashboard</a>
+        </p>
+
     <?php else: ?>
 
+        <!-- Error messages -->
         <?php if (!empty($errors)): ?>
-            <!-- Show any validation errors -->
             <div class="alert alert-error">
                 <?php foreach ($errors as $e): ?>
                     <div>• <?php echo htmlspecialchars($e); ?></div>
                 <?php endforeach; ?>
             </div>
-            <p style="margin-top:20px;"><a href="browse.php" class="btn">← Back to Browse</a></p>
+            <p style="margin-top:20px;">
+                <a href="browse.php" class="btn">← Back to Browse</a>
+            </p>
         <?php endif; ?>
 
+        <!-- Confirmation view (only shown if no errors) -->
         <?php if (empty($errors) && $lost && $found): ?>
 
-            <!-- Summary of the user's own lost item -->
-            <div style="background:#e8efff; padding:15px; border-radius:8px; margin-bottom:15px;">
-                <h3 style="margin-bottom:8px;">Your Lost Item</h3>
-                <p style="font-size:14px;">
+            <!-- Your lost item summary -->
+            <div style="background:#f5ebf5; padding:16px; border-radius:14px;
+                        margin-bottom:15px; border-left:4px solid #b39ddb;">
+                <h3 style="color:#6b5b82; margin-bottom:8px;">Your Lost Item</h3>
+                <p style="font-size:14px; color:#6b5b82;">
                     <strong><?php echo htmlspecialchars($lost['item_name']); ?></strong><br>
                     Color: <?php echo htmlspecialchars($lost['color'] ?: '—'); ?> |
                     Brand: <?php echo htmlspecialchars($lost['brand'] ?: '—'); ?> |
@@ -170,10 +188,11 @@ include 'includes/header.php';
                 </p>
             </div>
 
-            <!-- Summary of the found item being claimed -->
-            <div style="background:#e8fff0; padding:15px; border-radius:8px; margin-bottom:20px;">
-                <h3 style="margin-bottom:8px;">Found Item You Want to Claim</h3>
-                <p style="font-size:14px;">
+            <!-- The found item being claimed -->
+            <div style="background:#e8f4ec; padding:16px; border-radius:14px;
+                        margin-bottom:20px; border-left:4px solid #a5d8b8;">
+                <h3 style="color:#3a6b52; margin-bottom:8px;">Found Item You Want to Claim</h3>
+                <p style="font-size:14px; color:#3a6b52;">
                     <strong><?php echo htmlspecialchars($found['item_name']); ?></strong><br>
                     Category: <?php echo htmlspecialchars($found['category_name'] ?? '—'); ?><br>
                     Color: <?php echo htmlspecialchars($found['color'] ?: '—'); ?> |
@@ -184,22 +203,21 @@ include 'includes/header.php';
                 </p>
             </div>
 
-            <!-- Explanation of what submitting does -->
+            <!-- Explanation + submit -->
             <p class="helper" style="margin-bottom:20px;">
                 Clicking <strong>Submit Claim</strong> sends a request to the admin.
                 The admin will review and may contact you to verify ownership.
             </p>
 
-            <!-- Confirmation form -->
             <form method="POST">
                 <button type="submit" class="btn" style="width:100%;">Submit Claim</button>
                 <p class="helper" style="text-align:center; margin-top:12px;">
                     <a href="browse.php">← Back to Browse</a>
                 </p>
             </form>
-        <?php endif; ?>
 
+        <?php endif; ?>
     <?php endif; ?>
 </div>
 
-<?php include 'includes/footer.php'; ?>    
+<?php include 'includes/footer.php'; ?>

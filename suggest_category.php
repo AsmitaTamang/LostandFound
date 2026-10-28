@@ -1,146 +1,146 @@
 <?php
 /**
- * login.php
+ * suggest_category.php
  * ------------------------------------------------------------
- * PURPOSE: Allows existing users to log in.
- *
- * ACCESS: Public.
+ * PURPOSE: Allows users to suggest a new category when their
+ *          item doesn't fit any existing one.
  *
  * FLOW:
- *   1. If already logged in, go straight to dashboard.
- *   2. On POST, look up the user by email.
- *   3. Verify the password (supports both hashed and legacy
- *      plain-text passwords; the latter are auto-upgraded).
- *   4. On success, set session variables and redirect.
- *   5. On failure, show an error message.
+ *   1. Require login.
+ *   2. On POST: validate the suggestion, check for duplicates
+ *      (both in active categories and pending suggestions),
+ *      and insert into pending_categories with status='pending'.
+ *   3. Admin will later approve or reject via admin_categories.php.
+ *
+ * PART OF: Dynamic Category Management feature.
+ *
+ * SECURITY:
+ *   - Prepared statements prevent SQL injection.
+ *   - Output escaped with htmlspecialchars.
  * ------------------------------------------------------------
  */
 
-// Show all errors while developing.
+// Start output buffering so header() calls work later.
+ob_start();
+
+// Show all errors during development.
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
-
-// Buffer output so headers can be sent later if needed.
-ob_start();
 
 // Connect to the database.
 require_once 'dbconnect.php';
 
-// Start the session (suppressed warning if already started).
+// Start session if not already started.
 @session_start();
 
 // ------------------------------------------------------------
-// ALREADY LOGGED IN?
-// Skip the form and go straight to the dashboard.
+// AUTHORIZATION CHECK
 // ------------------------------------------------------------
-if (isset($_SESSION['user_id'])) {
+if (!isset($_SESSION['user_id'])) {
     ob_end_clean();
-    header("Location: dashboard.php");
+    header("Location: login.php");
     exit;
 }
 
-// Holds validation/login errors.
-$errors = [];
+// Cache the current user's ID.
+$user_id = (int)$_SESSION['user_id'];
+
+// Arrays for messages.
+$errors  = [];
+$success = '';
 
 // ------------------------------------------------------------
 // HANDLE FORM SUBMISSION
 // ------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    // Get and clean input.
-    $email    = trim($_POST['email'] ?? '');
-    $password = $_POST['password'] ?? '';
+    // Read and clean inputs.
+    $cat_name = trim($_POST['category_name'] ?? '');
+    $reason   = trim($_POST['reason'] ?? '');
 
-    if (empty($email) || empty($password)) {
-        $errors[] = "Please enter both email and password.";
-    } else {
+    // Validation.
+    if (empty($cat_name)) {
+        $errors[] = "Category name is required.";
+    }
 
-        // Look up the user by email.
+    // --------------------------------------------------------
+    // CHECK: Category already exists in the active list?
+    // --------------------------------------------------------
+    if (empty($errors)) {
         $stmt = $conn->prepare(
-            "SELECT user_id, full_name, email, password, role
-             FROM users WHERE email = ?"
+            "SELECT category_id FROM categories WHERE category_name = ?"
         );
-        $stmt->bind_param("s", $email);
+        $stmt->bind_param("s", $cat_name);
         $stmt->execute();
-        $result = $stmt->get_result();
+        $stmt->store_result();
 
-        if ($result->num_rows === 1) {
-            $user = $result->fetch_assoc();
-
-            // ------------------------------------------------
-            // CASE 1: Password is properly hashed
-            // ------------------------------------------------
-            if (password_verify($password, $user['password'])) {
-
-                // Set session variables for the logged-in user.
-                $_SESSION['user_id']   = $user['user_id'];
-                $_SESSION['full_name'] = $user['full_name'];
-                $_SESSION['email']     = $user['email'];
-                $_SESSION['role']      = $user['role'];
-
-                $stmt->close();
-                ob_end_clean();
-                header("Location: dashboard.php");
-                exit;
-            }
-            // ------------------------------------------------
-            // CASE 2: Password stored as plain text (legacy)
-            //         Match it, then upgrade to a hashed version.
-            // ------------------------------------------------
-            elseif ($user['password'] === $password) {
-
-                // Upgrade to a hashed password.
-                $new_hash = password_hash($password, PASSWORD_DEFAULT);
-                $upgrade = $conn->prepare("UPDATE users SET password = ? WHERE user_id = ?");
-                $upgrade->bind_param("si", $new_hash, $user['user_id']);
-                $upgrade->execute();
-                $upgrade->close();
-
-                // Log the user in.
-                $_SESSION['user_id']   = $user['user_id'];
-                $_SESSION['full_name'] = $user['full_name'];
-                $_SESSION['email']     = $user['email'];
-                $_SESSION['role']      = $user['role'];
-
-                $stmt->close();
-                ob_end_clean();
-                header("Location: dashboard.php");
-                exit;
-            }
-            // ------------------------------------------------
-            // CASE 3: Wrong password
-            // ------------------------------------------------
-            else {
-                $errors[] = "Incorrect email or password.";
-            }
-
-        } else {
-            $errors[] = "Incorrect email or password.";
+        if ($stmt->num_rows > 0) {
+            $errors[] = "This category already exists.";
         }
+        $stmt->close();
+    }
 
+    // --------------------------------------------------------
+    // CHECK: Same suggestion already pending?
+    // --------------------------------------------------------
+    if (empty($errors)) {
+        $stmt = $conn->prepare(
+            "SELECT pending_id FROM pending_categories
+             WHERE category_name = ? AND status = 'pending'"
+        );
+        $stmt->bind_param("s", $cat_name);
+        $stmt->execute();
+        $stmt->store_result();
+
+        if ($stmt->num_rows > 0) {
+            $errors[] = "This category has already been suggested and is awaiting approval.";
+        }
+        $stmt->close();
+    }
+
+    // --------------------------------------------------------
+    // INSERT THE SUGGESTION
+    // --------------------------------------------------------
+    if (empty($errors)) {
+        $stmt = $conn->prepare(
+            "INSERT INTO pending_categories (user_id, category_name, reason)
+             VALUES (?, ?, ?)"
+        );
+        $stmt->bind_param("iss", $user_id, $cat_name, $reason);
+
+        if ($stmt->execute()) {
+            $success = "Thank you! Your category suggestion is pending admin approval.";
+            $_POST = [];   // clear form after success
+        } else {
+            $errors[] = "Database error: " . $conn->error;
+        }
         $stmt->close();
     }
 }
 
-// Include the shared header/navigation.
+// Include the shared header.
 include 'includes/header.php';
 ?>
 
 <!-- ============================================================
-     MAIN PAGE CONTAINER
+     SUGGEST CATEGORY PAGE
      ============================================================ -->
-<div class="container">
-    <h2 style="margin-bottom:20px;">Log In</h2>
+<div class="container" style="max-width:520px;">
 
-    <?php if (isset($_SESSION['flash_success'])): ?>
-        <!-- One-time success message from register.php -->
-        <div class="alert alert-success">
-            <?php echo htmlspecialchars($_SESSION['flash_success']); unset($_SESSION['flash_success']); ?>
-        </div>
+    <h2>Suggest a New Category</h2>
+
+    <p class="helper" style="margin-bottom:20px;">
+        If your item doesn't fit any existing category, you can suggest
+        a new one. An administrator will review your suggestion.
+    </p>
+
+    <!-- Success message -->
+    <?php if ($success): ?>
+        <div class="alert alert-success">🌸 <?php echo htmlspecialchars($success); ?></div>
     <?php endif; ?>
 
+    <!-- Validation errors -->
     <?php if (!empty($errors)): ?>
-        <!-- Login errors -->
         <div class="alert alert-error">
             <?php foreach ($errors as $e): ?>
                 <div>• <?php echo htmlspecialchars($e); ?></div>
@@ -148,24 +148,28 @@ include 'includes/header.php';
         </div>
     <?php endif; ?>
 
-    <form method="POST" action="login.php">
-        <!-- Email field (pre-filled on failed submission) -->
+    <!-- ============================================================
+         SUGGESTION FORM
+         ============================================================ -->
+    <form method="POST">
+
         <div class="form-group">
-            <label for="email">Email Address</label>
-            <input type="email" id="email" name="email" required
-                   value="<?php echo htmlspecialchars($_POST['email'] ?? ''); ?>">
+            <label>Category Name *</label>
+            <input type="text" name="category_name" required
+                   placeholder="e.g., Smartwatch"
+                   value="<?php echo htmlspecialchars($_POST['category_name'] ?? ''); ?>">
         </div>
 
-        <!-- Password field -->
         <div class="form-group">
-            <label for="password">Password</label>
-            <input type="password" id="password" name="password" required>
+            <label>Why is this category needed? (optional)</label>
+            <textarea name="reason" rows="3"
+                      placeholder="e.g., Many students have smartwatches"><?php echo htmlspecialchars($_POST['reason'] ?? ''); ?></textarea>
         </div>
 
-        <button type="submit" class="btn" style="width:100%;">Log In</button>
+        <button type="submit" class="btn" style="width:100%;">Submit Suggestion</button>
 
-        <p class="helper" style="text-align:center;">
-            Don't have an account? <a href="register.php">Register</a>
+        <p class="helper" style="text-align:center; margin-top:12px;">
+            <a href="dashboard.php">← Back to Dashboard</a>
         </p>
     </form>
 </div>

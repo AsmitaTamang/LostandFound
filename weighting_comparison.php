@@ -2,87 +2,100 @@
 /**
  * weighting_comparison.php
  * ------------------------------------------------------------
- * PURPOSE: Compare three weighting strategies for the
- *          multi-attribute matching algorithm:
+ * PURPOSE: Compare three weighting strategies for the matching
+ *          algorithm to determine which best ranks truth items
+ *          above distractors.
  *
- *   1. EQUAL weights  — all attributes contribute 20 points
- *   2. FIXED weights  — current default (40/20/20/10/10)
- *   3. TUNED weights  — adjusted for best results (50/20/15/10/5)
+ * STRATEGIES COMPARED:
+ *   1. Equal  — 25 / 25 / 25 / 25
+ *   2. Fixed  — 33 / 33 / 17 / 17  (production default)
+ *   3. Tuned  — selected by a grid search on the tuning set
  *
- * OUTPUT:
- *   - Side-by-side metrics table (accuracy, precision, recall, match rate)
- *   - Per-strategy confusion matrix
- *   - Winner highlighted
+ * DATA SPLIT:
+ *   The simulated pairs are split INTERLEAVED (even index →
+ *   tuning, odd index → test) so both sets contain a mix of
+ *   easy, medium, and hard cases.
  *
- * This addresses the supervisor's request to compare different
- * weighting strategies rather than using one fixed set.
+ * KEY RULE:
+ *   Tuning weights are chosen ONLY on the tuning set and then
+ *   evaluated on the held-out test set. This prevents
+ *   "overfitting" — the tuned strategy cannot peek at the
+ *   test data.
+ *
+ * CATEGORY ROLE:
+ *   Category is a hard gate (SQL filter). It is NOT scored.
+ *   Only color, brand, location, date are weighted, and the
+ *   weights are normalised so they sum to 100.
+ *
+ * ACCESS: Admin only.
  * ------------------------------------------------------------
  */
 
+// Start output buffering so header() calls work later.
+ob_start();
+
+// Show all errors during development.
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-ob_start();
+// Connect to the database.
 require_once 'dbconnect.php';
 
+// Start session if not already started.
 @session_start();
 
-if (!isset($_SESSION['user_id'])) {
+// ------------------------------------------------------------
+// AUTHORIZATION CHECK
+// Admin only.
+// ------------------------------------------------------------
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
     ob_end_clean();
-    header("Location: login.php");
+    header("Location: dashboard.php");
     exit;
 }
 
+// Simulated dataset owner.
 $SIM_USER_ID = 999;
 
 
 // ============================================================
-// CUSTOM SCORING FUNCTION (accepts weights as parameter)
+// SCORING FUNCTION — 4 ATTRIBUTES ONLY (no category)
+// Accepts a weight array so we can test multiple strategies
+// with the same code.
 // ============================================================
-function score_with_weights($lost, $found, $weights) {
+function score_4_attributes($lost, $found, $w) {
 
     $score = 0;
 
-    // 1. CATEGORY
-    if (
-        !empty($lost['category_id']) && !empty($found['category_id']) &&
-        (int)$lost['category_id'] === (int)$found['category_id']
-    ) {
-        $score += $weights['category'];
-    }
-
-    // 2. COLOR
+    // COLOR
     if (!empty($lost['color']) && !empty($found['color'])) {
         if (strtolower(trim($lost['color'])) === strtolower(trim($found['color']))) {
-            $score += $weights['color'];
+            $score += $w['color'];
         }
     }
 
-    // 3. BRAND
+    // BRAND
     if (!empty($lost['brand']) && !empty($found['brand'])) {
         if (strtolower(trim($lost['brand'])) === strtolower(trim($found['brand']))) {
-            $score += $weights['brand'];
+            $score += $w['brand'];
         }
     }
 
-    // 4. LOCATION
+    // LOCATION (partial match)
     if (!empty($lost['location']) && !empty($found['location'])) {
         $ll = strtolower(trim($lost['location']));
         $fl = strtolower(trim($found['location']));
         if (strpos($ll, $fl) !== false || strpos($fl, $ll) !== false) {
-            $score += $weights['location'];
+            $score += $w['location'];
         }
     }
 
-    // 5. DATE (within 3 days)
+    // DATE (within 3 days)
     if (!empty($lost['date_lost']) && !empty($found['date_found'])) {
         $d1 = strtotime($lost['date_lost']);
         $d2 = strtotime($found['date_found']);
-        if ($d1 && $d2) {
-            $diff = abs($d2 - $d1) / 86400;
-            if ($diff <= 3) {
-                $score += $weights['date'];
-            }
+        if ($d1 && $d2 && abs($d2 - $d1) / 86400 <= 3) {
+            $score += $w['date'];
         }
     }
 
@@ -91,17 +104,16 @@ function score_with_weights($lost, $found, $weights) {
 
 
 // ============================================================
-// FIND BEST MATCH USING CUSTOM WEIGHTS (TOP-1)
+// FIND TOP-1 MATCH USING A GIVEN WEIGHT ARRAY
+// Category is applied as a hard filter. Items with score
+// below the threshold are discarded (no match).
 // ============================================================
-function find_top1_with_weights($conn, $lost, $weights, $threshold = 40) {
+function top1_with_weights($conn, $lost, $w, $threshold = 40) {
 
-    // Only search within same category (same as main algorithm)
     $stmt = $conn->prepare(
         "SELECT * FROM found_items
          WHERE status = 'open' AND category_id = ?"
     );
-    if (!$stmt) return null;
-
     $stmt->bind_param("i", $lost['category_id']);
     $stmt->execute();
     $res = $stmt->get_result();
@@ -109,129 +121,219 @@ function find_top1_with_weights($conn, $lost, $weights, $threshold = 40) {
     $best_id = null;
     $best_score = 0;
 
-    while ($found = $res->fetch_assoc()) {
-        $s = score_with_weights($lost, $found, $weights);
+    while ($f = $res->fetch_assoc()) {
+        $s = score_4_attributes($lost, $f, $w);
         if ($s > $best_score) {
             $best_score = $s;
-            $best_id    = (int)$found['found_id'];
+            $best_id    = (int)$f['found_id'];
         }
     }
     $stmt->close();
 
-    if ($best_score < $threshold) return null;
-    return $best_id;
+    return ($best_score >= $threshold) ? $best_id : null;
 }
 
 
 // ============================================================
-// DEFINE THE THREE STRATEGIES
+// EVALUATE A WEIGHT ARRAY ON A SET OF PAIRS
+// Returns accuracy, precision, recall, and TP/FP/FN/TN.
 // ============================================================
-$strategies = [
-    'Equal Weights' => [
-        'weights' => ['category' => 20, 'color' => 20, 'brand' => 20, 'location' => 20, 'date' => 20],
-        'label'   => '20 / 20 / 20 / 20 / 20',
-    ],
-    'Fixed Weights (Current)' => [
-        'weights' => ['category' => 40, 'color' => 20, 'brand' => 20, 'location' => 10, 'date' => 10],
-        'label'   => '40 / 20 / 20 / 10 / 10',
-    ],
-    'Tuned Weights' => [
-        'weights' => ['category' => 50, 'color' => 20, 'brand' => 15, 'location' => 10, 'date' => 5],
-        'label'   => '50 / 20 / 15 / 10 / 5',
-    ],
-];
-
-
-// ============================================================
-// LOAD SIMULATED DATA
-// ============================================================
-$lost_items = [];
-$found_items = [];
-
-$res = $conn->query("SELECT * FROM lost_items WHERE user_id = $SIM_USER_ID ORDER BY lost_id");
-while ($row = $res->fetch_assoc()) $lost_items[] = $row;
-
-$res = $conn->query("SELECT * FROM found_items WHERE user_id = $SIM_USER_ID ORDER BY found_id");
-while ($row = $res->fetch_assoc()) $found_items[] = $row;
-
-// Build pairs
-$pairs = [];
-for ($i = 0; $i < min(count($lost_items), count($found_items)); $i++) {
-    $lost  = $lost_items[$i];
-    $truth = $found_items[$i];
-    $is_true = ((int)$lost['category_id'] === (int)$truth['category_id']);
-    $pairs[] = ['lost' => $lost, 'truth' => $truth, 'is_true' => $is_true];
-}
-
-
-// ============================================================
-// RUN EACH STRATEGY
-// ============================================================
-$results = [];
-
-foreach ($strategies as $name => $strategy) {
-    $w = $strategy['weights'];
+function eval_on_set($conn, $pairs, $w, $threshold = 40) {
 
     $tp = $fp = $fn = $tn = 0;
 
-    foreach ($pairs as $pair) {
-        $lost = $pair['lost'];
-        $truth_id = (int)$pair['truth']['found_id'];
-        $is_true  = $pair['is_true'];
+    foreach ($pairs as $p) {
+        $top_id   = top1_with_weights($conn, $p['lost'], $w, $threshold);
+        $truth_id = (int)$p['truth']['found_id'];
+        $correct  = ($top_id === $truth_id);
+        $is_true  = $p['is_true'];
 
-        // Get top-1 match with these weights
-        $top_id = find_top1_with_weights($conn, $lost, $w);
-        $correct = ($top_id === $truth_id);
-
-        if ($is_true && $correct)      $tp++;
-        elseif ($is_true && !$correct) $fn++;
-        elseif (!$is_true && $correct) $fp++;
-        else                           $tn++;
+        if ($is_true && $correct)       $tp++;
+        elseif ($is_true && !$correct)  $fn++;
+        elseif (!$is_true && $correct)  $fp++;
+        else                            $tn++;
     }
 
     $total = $tp + $fp + $fn + $tn;
 
-    $results[$name] = [
-        'label'     => $strategy['label'],
-        'weights'   => $w,
-        'accuracy'  => $total > 0 ? round(($tp + $tn) / $total * 100, 2) : 0,
-        'precision' => ($tp + $fp) > 0 ? round($tp / ($tp + $fp) * 100, 2) : 0,
-        'recall'    => ($tp + $fn) > 0 ? round($tp / ($tp + $fn) * 100, 2) : 0,
-        'match_rate'=> ($tp + $fn) > 0 ? round($tp / ($tp + $fn) * 100, 2) : 0,
+    return [
+        'accuracy'  => $total ? round(($tp + $tn) / $total * 100, 2) : 0,
+        'precision' => ($tp + $fp) ? round($tp / ($tp + $fp) * 100, 2) : 0,
+        'recall'    => ($tp + $fn) ? round($tp / ($tp + $fn) * 100, 2) : 0,
         'tp' => $tp, 'fp' => $fp, 'fn' => $fn, 'tn' => $tn,
     ];
 }
 
-// Find winner (highest accuracy)
-$winner = '';
-$best_acc = -1;
-foreach ($results as $name => $r) {
-    if ($r['accuracy'] > $best_acc) {
-        $best_acc = $r['accuracy'];
-        $winner = $name;
+
+// ============================================================
+// LOAD DATA + BUILD PAIRS
+// ============================================================
+$lost_items = [];
+$found_items = [];
+
+$res = $conn->query(
+    "SELECT * FROM lost_items WHERE user_id = $SIM_USER_ID ORDER BY lost_id"
+);
+while ($r = $res->fetch_assoc()) $lost_items[] = $r;
+
+$res = $conn->query(
+    "SELECT * FROM found_items WHERE user_id = $SIM_USER_ID ORDER BY found_id"
+);
+while ($r = $res->fetch_assoc()) $found_items[] = $r;
+
+// Pair each lost item with its truth found item by position.
+$pairs = [];
+for ($i = 0; $i < min(count($lost_items), count($found_items)); $i++) {
+    $lost  = $lost_items[$i];
+    $truth = $found_items[$i];
+    $pairs[] = [
+        'lost'    => $lost,
+        'truth'   => $truth,
+        'is_true' => ((int)$lost['category_id'] === (int)$truth['category_id']),
+    ];
+}
+
+// ------------------------------------------------------------
+// INTERLEAVED SPLIT
+// Even indices go to tuning, odd indices go to test.
+// This guarantees both sets contain a mix of easy / medium /
+// hard pairs, avoiding bias in either direction.
+// ------------------------------------------------------------
+$tuning   = [];
+$test_set = [];
+foreach ($pairs as $i => $p) {
+    if ($i % 2 === 0) $tuning[]   = $p;
+    else              $test_set[] = $p;
+}
+
+
+// ============================================================
+// STRATEGY 1: EQUAL
+// Every attribute contributes 25 points.
+// ============================================================
+$equal_w = ['color' => 25, 'brand' => 25, 'location' => 25, 'date' => 25];
+
+
+// ============================================================
+// STRATEGY 2: FIXED
+// Production default. Color and brand get more weight because
+// they are the most discriminative attributes for telling
+// same-category items apart.
+// ============================================================
+$fixed_w = ['color' => 33, 'brand' => 33, 'location' => 17, 'date' => 17];
+
+
+// ============================================================
+// STRATEGY 3: TUNED
+// Grid search over the tuning set only. We iterate possible
+// (color, brand, location) values in 10-point steps and derive
+// the date weight as the remainder, keeping the total at 100.
+// The best accuracy on the tuning set defines the tuned weights.
+// ============================================================
+$best_score = -1;
+$tuned_w    = $equal_w;   // fallback in case the grid search finds nothing better
+
+for ($c = 10; $c <= 60; $c += 10) {
+    for ($b = 10; $b <= 60; $b += 10) {
+        for ($l = 10; $l <= 60; $l += 10) {
+
+            $d = 100 - $c - $b - $l;
+            if ($d < 10 || $d > 60) continue;
+
+            $candidate = ['color' => $c, 'brand' => $b, 'location' => $l, 'date' => $d];
+
+            $m = eval_on_set($conn, $tuning, $candidate);
+
+            // Prefer higher accuracy; break ties by recall.
+            $s = $m['accuracy'] * 1000 + $m['recall'];
+            if ($s > $best_score) {
+                $best_score = $s;
+                $tuned_w    = $candidate;
+            }
+        }
     }
 }
 
+
+// ============================================================
+// FINAL EVALUATION — ON THE HELD-OUT TEST SET ONLY
+// ============================================================
+$results = [
+    'Equal' => [
+        'w'       => $equal_w,
+        'metrics' => eval_on_set($conn, $test_set, $equal_w),
+    ],
+    'Fixed' => [
+        'w'       => $fixed_w,
+        'metrics' => eval_on_set($conn, $test_set, $fixed_w),
+    ],
+    'Tuned' => [
+        'w'       => $tuned_w,
+        'metrics' => eval_on_set($conn, $test_set, $tuned_w),
+    ],
+];
+
+// Determine the winner (highest accuracy; ties are kept as-is
+// for the discussion chapter to explain the parsimony rule).
+$winner    = '';
+$best_acc  = -1;
+foreach ($results as $name => $r) {
+    if ($r['metrics']['accuracy'] > $best_acc) {
+        $best_acc = $r['metrics']['accuracy'];
+        $winner   = $name;
+    }
+}
+
+// Include the shared header.
 include 'includes/header.php';
 ?>
 
+<!-- ============================================================
+     WEIGHTING STRATEGY COMPARISON PAGE
+     ============================================================ -->
 <div class="container" style="max-width:1100px;">
-    <h2 style="margin-bottom:10px;">Weighting Strategy Comparison</h2>
+
+    <h2>Weighting Strategy Comparison</h2>
+
     <p class="helper" style="margin-bottom:20px;">
-        Three different weighting strategies tested on the same
-        <?php echo count($pairs); ?> simulated pairs.
-        Evaluation is <strong>TOP-1</strong> (only the #1 ranked match counts).
+        Category is a hard gate (same category required). Only color,
+        brand, location, and date are weighted. Total weights sum to 100.
+        Evaluation is TOP-1: only the first ranked match counts.
     </p>
 
     <!-- ============================================================
-         STRATEGY DEFINITIONS
+         DATA SPLIT SUMMARY
          ============================================================ -->
-    <h3 style="margin-top:20px;">Strategies Tested</h3>
-    <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:14px;">
+    <h3 style="color:#6b5b82;">Data Split</h3>
+
+    <table style="width:100%; border-collapse:collapse; font-size:14px; margin-top:10px;">
+        <tr style="background:#fdf6f9;">
+            <td style="padding:10px; border:1px solid #f0e8f4;">
+                Tuning set (used to select tuned weights)
+            </td>
+            <td style="padding:10px; border:1px solid #f0e8f4; text-align:center;">
+                <strong><?php echo count($tuning); ?></strong> pairs
+            </td>
+        </tr>
+        <tr>
+            <td style="padding:10px; border:1px solid #f0e8f4;">
+                Test set (held out for final comparison)
+            </td>
+            <td style="padding:10px; border:1px solid #f0e8f4; text-align:center;">
+                <strong><?php echo count($test_set); ?></strong> pairs
+            </td>
+        </tr>
+    </table>
+
+    <!-- ============================================================
+         STRATEGY WEIGHTS
+         ============================================================ -->
+    <h3 style="margin-top:30px; color:#6b5b82;">Strategies Tested</h3>
+
+    <table style="width:100%; border-collapse:collapse; font-size:14px; margin-top:10px;">
         <thead>
-            <tr style="background:#041E60; color:white;">
+            <tr style="background:linear-gradient(120deg,#b39ddb,#f4b6c5); color:white;">
                 <th style="padding:10px; text-align:left;">Strategy</th>
-                <th style="padding:10px; text-align:center;">Category</th>
                 <th style="padding:10px; text-align:center;">Color</th>
                 <th style="padding:10px; text-align:center;">Brand</th>
                 <th style="padding:10px; text-align:center;">Location</th>
@@ -241,13 +343,13 @@ include 'includes/header.php';
         </thead>
         <tbody>
             <?php foreach ($results as $name => $r): ?>
-                <tr style="border-bottom:1px solid #ddd; <?php echo $name === $winner ? 'background:#e8fff0;' : ''; ?>">
-                    <td style="padding:10px;"><strong><?php echo htmlspecialchars($name); ?></strong></td>
-                    <td style="padding:10px; text-align:center;"><?php echo $r['weights']['category']; ?></td>
-                    <td style="padding:10px; text-align:center;"><?php echo $r['weights']['color']; ?></td>
-                    <td style="padding:10px; text-align:center;"><?php echo $r['weights']['brand']; ?></td>
-                    <td style="padding:10px; text-align:center;"><?php echo $r['weights']['location']; ?></td>
-                    <td style="padding:10px; text-align:center;"><?php echo $r['weights']['date']; ?></td>
+                <tr style="border-bottom:1px solid #f0e8f4;
+                           <?php echo $name === $winner ? 'background:#e8f4ec;' : ''; ?>">
+                    <td style="padding:10px;"><strong><?php echo $name; ?></strong></td>
+                    <td style="padding:10px; text-align:center;"><?php echo $r['w']['color']; ?></td>
+                    <td style="padding:10px; text-align:center;"><?php echo $r['w']['brand']; ?></td>
+                    <td style="padding:10px; text-align:center;"><?php echo $r['w']['location']; ?></td>
+                    <td style="padding:10px; text-align:center;"><?php echo $r['w']['date']; ?></td>
                     <td style="padding:10px; text-align:center;"><strong>100</strong></td>
                 </tr>
             <?php endforeach; ?>
@@ -255,40 +357,32 @@ include 'includes/header.php';
     </table>
 
     <!-- ============================================================
-         METRICS COMPARISON
+         METRICS ON THE TEST SET
          ============================================================ -->
-    <h3 style="margin-top:40px;">Metrics Comparison</h3>
-    <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:14px;">
+    <h3 style="margin-top:40px; color:#6b5b82;">Metrics on Test Set</h3>
+
+    <table style="width:100%; border-collapse:collapse; font-size:14px; margin-top:10px;">
         <thead>
-            <tr style="background:#1e7e34; color:white;">
+            <tr style="background:linear-gradient(120deg,#a5d8b8,#c8e6d0); color:#3a6b52;">
                 <th style="padding:12px; text-align:left;">Metric</th>
                 <?php foreach ($results as $name => $r): ?>
-                    <th style="padding:12px; text-align:center;"><?php echo htmlspecialchars($name); ?></th>
+                    <th style="padding:12px; text-align:center;"><?php echo $name; ?></th>
                 <?php endforeach; ?>
             </tr>
         </thead>
         <tbody>
             <?php
-            $metrics = [
-                'accuracy'   => 'Accuracy',
-                'precision'  => 'Precision',
-                'recall'     => 'Recall',
-                'match_rate' => 'Successful Match Rate',
-            ];
-            foreach ($metrics as $key => $label):
+            // Render each metric row and highlight the best value.
+            foreach (['accuracy'=>'Accuracy','precision'=>'Precision','recall'=>'Recall'] as $k => $lbl):
+                $best_v = 0;
+                foreach ($results as $r) if ($r['metrics'][$k] > $best_v) $best_v = $r['metrics'][$k];
             ?>
-                <tr style="border-bottom:1px solid #ddd;">
-                    <td style="padding:10px;"><strong><?php echo $label; ?></strong></td>
-                    <?php
-                    // Find best value for this metric
-                    $best_val = 0;
-                    foreach ($results as $r) {
-                        if ($r[$key] > $best_val) $best_val = $r[$key];
-                    }
-                    ?>
+                <tr style="border-bottom:1px solid #f0e8f4;">
+                    <td style="padding:10px;"><strong><?php echo $lbl; ?></strong></td>
                     <?php foreach ($results as $name => $r): ?>
-                        <td style="padding:10px; text-align:center; <?php echo $r[$key] == $best_val ? 'background:#d4edda; font-weight:bold;' : ''; ?>">
-                            <?php echo $r[$key]; ?>%
+                        <td style="padding:10px; text-align:center;
+                                   <?php echo $r['metrics'][$k] == $best_v ? 'background:#d4edda; font-weight:bold;' : ''; ?>">
+                            <?php echo $r['metrics'][$k]; ?>%
                         </td>
                     <?php endforeach; ?>
                 </tr>
@@ -296,56 +390,11 @@ include 'includes/header.php';
         </tbody>
     </table>
 
-    <!-- ============================================================
-         CONFUSION MATRICES
-         ============================================================ -->
-    <h3 style="margin-top:40px;">Confusion Matrices</h3>
-    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:20px; margin-top:15px;">
-        <?php foreach ($results as $name => $r): ?>
-            <div>
-                <h4 style="font-size:14px; <?php echo $name === $winner ? 'color:#1e7e34;' : ''; ?>">
-                    <?php echo htmlspecialchars($name); ?>
-                    <?php if ($name === $winner): ?> 🏆<?php endif; ?>
-                </h4>
-                <table style="width:100%; border-collapse:collapse; font-size:12px;">
-                    <tr>
-                        <th style="padding:6px; border:1px solid #ccc;"></th>
-                        <th style="padding:6px; border:1px solid #ccc;">Pred M</th>
-                        <th style="padding:6px; border:1px solid #ccc;">Pred N</th>
-                    </tr>
-                    <tr>
-                        <th style="padding:6px; border:1px solid #ccc;">Act M</th>
-                        <td style="padding:6px; border:1px solid #ccc; text-align:center; background:#d4edda;"><?php echo $r['tp']; ?></td>
-                        <td style="padding:6px; border:1px solid #ccc; text-align:center; background:#f8d7da;"><?php echo $r['fn']; ?></td>
-                    </tr>
-                    <tr>
-                        <th style="padding:6px; border:1px solid #ccc;">Act N</th>
-                        <td style="padding:6px; border:1px solid #ccc; text-align:center; background:#f8d7da;"><?php echo $r['fp']; ?></td>
-                        <td style="padding:6px; border:1px solid #ccc; text-align:center; background:#d4edda;"><?php echo $r['tn']; ?></td>
-                    </tr>
-                </table>
-            </div>
-        <?php endforeach; ?>
-    </div>
-
-    <!-- ============================================================
-         WINNER SUMMARY
-         ============================================================ -->
-    <h3 style="margin-top:40px;">Conclusion</h3>
-    <div style="background:#e8fff0; border-left:5px solid #1e7e34; padding:20px; margin-top:15px; border-radius:5px;">
-        <p style="font-size:15px; margin:0;">
-            🏆 <strong>Best strategy: <?php echo htmlspecialchars($winner); ?></strong>
-            with <strong><?php echo $results[$winner]['accuracy']; ?>%</strong> accuracy.
-        </p>
-        <p style="margin-top:10px; font-size:14px; color:#555;">
-            This suggests that <strong>category is the most reliable attribute</strong>
-            for identifying a true match. Giving it more weight than other attributes
-            improves overall accuracy.
-        </p>
-    </div>
+    
+    
 
     <p style="margin-top:30px;">
-        <a href="dashboard.php" class="btn">← Back to Dashboard</a>
+        <a href="admin_dashboard.php" class="btn">← Back to Admin Dashboard</a>
     </p>
 </div>
 
