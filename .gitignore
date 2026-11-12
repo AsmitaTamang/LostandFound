@@ -10,4 +10,5 @@ Thumbs.db
 .vscode/
 
 # Ignore local database dumps
-*.sql
+**.sql
+!database_backup.sql

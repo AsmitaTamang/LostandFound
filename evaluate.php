@@ -7,7 +7,7 @@
  *
  * OUTPUT:
  *   - Summary metrics table (accuracy, precision, recall, rate)
- *   - Confusion matrices for both systems
+ *   - Top-1 Match Counts for both systems
  *   - Detailed per-pair breakdown
  *
  * DATASET: The simulated items tagged with user_id = 999.
@@ -247,52 +247,46 @@ include 'includes/header.php';
     </table>
 
     <!-- ============================================================
-         CONFUSION MATRICES
+         TOP-1 MATCH COUNTS (Replaces Confusion Matrix)
          ============================================================ -->
-    <h3 style="margin-top:40px; color:#6b5b82;">Confusion Matrices</h3>
+    <h3 style="margin-top:40px; color:#6b5b82;">Top-1 Match Counts</h3>
 
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:15px;">
 
-        <!-- Multi-attribute matrix -->
-        <div>
-            <h4 style="color:#6b5b82;">Multi-Attribute</h4>
-            <table style="width:100%; border-collapse:collapse; font-size:14px;">
+        <!-- Multi-attribute counts -->
+        <div style="background:#fdf6f9; padding:20px; border-radius:12px; border:1px solid #f0e8f4;">
+            <h4 style="color:#6b5b82; text-align:center;">Multi-Attribute System (n=40)</h4>
+            <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:14px;">
                 <tr>
-                    <th style="padding:8px; border:1px solid #f0e8f4;"></th>
-                    <th style="padding:8px; border:1px solid #f0e8f4;">Pred Match</th>
-                    <th style="padding:8px; border:1px solid #f0e8f4;">Pred No</th>
+                    <td style="padding:10px; border-bottom:1px solid #ddd;">Top-1 Correct</td>
+                    <td style="padding:10px; border-bottom:1px solid #ddd; text-align:center; background:#d4edda; font-weight:bold;">
+                        <?php echo $ma_metrics['tp']; ?>
+                    </td>
                 </tr>
                 <tr>
-                    <th style="padding:8px; border:1px solid #f0e8f4;">Actual Match</th>
-                    <td style="padding:8px; border:1px solid #f0e8f4; text-align:center; background:#d4edda;">TP=<?php echo $ma_metrics['tp']; ?></td>
-                    <td style="padding:8px; border:1px solid #f0e8f4; text-align:center; background:#f8d7da;">FN=<?php echo $ma_metrics['fn']; ?></td>
-                </tr>
-                <tr>
-                    <th style="padding:8px; border:1px solid #f0e8f4;">Actual No</th>
-                    <td style="padding:8px; border:1px solid #f0e8f4; text-align:center; background:#f8d7da;">FP=<?php echo $ma_metrics['fp']; ?></td>
-                    <td style="padding:8px; border:1px solid #f0e8f4; text-align:center; background:#d4edda;">TN=<?php echo $ma_metrics['tn']; ?></td>
+                    <td style="padding:10px; border-bottom:1px solid #ddd;">Top-1 Incorrect</td>
+                    <td style="padding:10px; border-bottom:1px solid #ddd; text-align:center; background:#f8d7da;">
+                        <?php echo $ma_metrics['fn']; ?>
+                    </td>
                 </tr>
             </table>
         </div>
 
-        <!-- Keyword baseline matrix -->
-        <div>
-            <h4 style="color:#6b5b82;">Keyword Baseline</h4>
-            <table style="width:100%; border-collapse:collapse; font-size:14px;">
+        <!-- Keyword baseline counts -->
+        <div style="background:#fdf6f9; padding:20px; border-radius:12px; border:1px solid #f0e8f4;">
+            <h4 style="color:#6b5b82; text-align:center;">Keyword Baseline (n=40)</h4>
+            <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:14px;">
                 <tr>
-                    <th style="padding:8px; border:1px solid #f0e8f4;"></th>
-                    <th style="padding:8px; border:1px solid #f0e8f4;">Pred Match</th>
-                    <th style="padding:8px; border:1px solid #f0e8f4;">Pred No</th>
+                    <td style="padding:10px; border-bottom:1px solid #ddd;">Top-1 Correct</td>
+                    <td style="padding:10px; border-bottom:1px solid #ddd; text-align:center; background:#d4edda; font-weight:bold;">
+                        <?php echo $kw_metrics['tp']; ?>
+                    </td>
                 </tr>
                 <tr>
-                    <th style="padding:8px; border:1px solid #f0e8f4;">Actual Match</th>
-                    <td style="padding:8px; border:1px solid #f0e8f4; text-align:center; background:#d4edda;">TP=<?php echo $kw_metrics['tp']; ?></td>
-                    <td style="padding:8px; border:1px solid #f0e8f4; text-align:center; background:#f8d7da;">FN=<?php echo $kw_metrics['fn']; ?></td>
-                </tr>
-                <tr>
-                    <th style="padding:8px; border:1px solid #f0e8f4;">Actual No</th>
-                    <td style="padding:8px; border:1px solid #f0e8f4; text-align:center; background:#f8d7da;">FP=<?php echo $kw_metrics['fp']; ?></td>
-                    <td style="padding:8px; border:1px solid #f0e8f4; text-align:center; background:#d4edda;">TN=<?php echo $kw_metrics['tn']; ?></td>
+                    <td style="padding:10px; border-bottom:1px solid #ddd;">Top-1 Incorrect</td>
+                    <td style="padding:10px; border-bottom:1px solid #ddd; text-align:center; background:#f8d7da;">
+                        <?php echo $kw_metrics['fn']; ?>
+                    </td>
                 </tr>
             </table>
         </div>
